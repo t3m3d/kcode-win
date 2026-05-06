@@ -23,9 +23,9 @@ import settings
 import theme
 from editor import CodeEditor, path_to_uri
 from file_tree import FileTreePane
+from kbackend_client import KbackendClient
 from lsp_client import LspClient
 from output_panel import OutputPanel
-from runner import KryptonRunner
 
 
 def uri_to_path(uri: str) -> str:
@@ -45,8 +45,9 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self._settings = settings.load()
-        self._kcc_path = settings.resolve_kcc(self._settings) or ""
-        self._kls_path = settings.resolve_kls(self._settings) or ""
+        self._kcc_path      = settings.resolve_kcc(self._settings) or ""
+        self._kls_path      = settings.resolve_kls(self._settings) or ""
+        self._kbackend_path = settings.resolve_kbackend(self._settings) or ""
 
         self._status = QStatusBar(self)
         self.setStatusBar(self._status)
@@ -129,11 +130,16 @@ class MainWindow(QMainWindow):
         sc_outline.setContext(Qt.ApplicationShortcut)
         sc_outline.activated.connect(self.action_outline)
 
-        self._runner = KryptonRunner(self._kcc_path, self)
-        self._runner.started.connect(lambda phase: self._status.showMessage(f"{phase}…"))
-        self._runner.output.connect(self._output.append_build)
-        self._runner.finished.connect(lambda code, phase: self._status.showMessage(
-            f"{phase} exit {code}", 5000))
+        # Krypton-side build/run service. Spawned once, kept alive.
+        self._kbackend = None
+        if self._kbackend_path:
+            self._kbackend = KbackendClient(self._kbackend_path, self)
+            self._kbackend.outputReceived.connect(self._output.append_build)
+            self._kbackend.buildFinished.connect(self._on_build_finished)
+            self._kbackend.backendLog.connect(self._output.append_kls)
+            self._kbackend.backendFailed.connect(
+                lambda m: self._output.append_kls("[kbackend] " + m))
+            self._kbackend.start()
 
         if self._lsp:
             self._lsp.diagnosticsReceived.connect(self._on_diagnostics)
@@ -195,12 +201,41 @@ class MainWindow(QMainWindow):
         if not ed.file_path:
             QMessageBox.warning(self, "kcode-win", "Save the file first so we know where to put the build output.")
             return
+        if not self._kbackend:
+            QMessageBox.warning(self, "kcode-win",
+                f"kbackend.exe not found. Set 'kbackend_path' in settings.json.\nLooked at: {self._kbackend_path or '(no path resolved)'}")
+            return
+
+        src = Path(ed.file_path).resolve()
+        out_dir = src.parent / ".kcode_build"
+        out_dir.mkdir(exist_ok=True)
+        c_path   = out_dir / (src.stem + ".c")
+        exe_path = out_dir / (src.stem + ".exe")
+
+        # Compose the full pipeline as a single shell command. cmd.exe
+        # &&-chaining short-circuits on failure so we never link/run a
+        # botched compile, never run an exe that didn't link.
+        cmd = (
+            f'"{self._kcc_path}" "{src}" > "{c_path}"'
+            f' && gcc "{c_path}" -o "{exe_path}" -w'
+            f' && "{exe_path}"'
+        )
+
         self._output.clear_build()
         self._output.gc.reset()
-        self._runner.build_and_run(ed.file_path)
+        self._output.append_build(f"$ {cmd}\n")
+        self._status.showMessage("running…")
+        self._kbackend.run_shell(cmd)
+
+    def _on_build_finished(self, code: int):
+        self._output.append_build(f"\n[exit {code}]\n")
+        self._status.showMessage(f"exit {code}", 5000)
 
     def action_stop(self):
-        self._runner.stop()
+        # kbackend doesn't currently expose a stop method — TODO v0.2.
+        # For now, killing the backend would interrupt the running child
+        # but also kill the service. Just no-op with a status message.
+        self._status.showMessage("Stop not yet wired through kbackend", 4000)
 
     def _on_theme_changed(self, name: str):
         theme.apply(name)
@@ -420,6 +455,8 @@ class MainWindow(QMainWindow):
 
         if self._lsp:
             self._lsp.stop()
+        if self._kbackend:
+            self._kbackend.stop()
 
         super().closeEvent(e)
 

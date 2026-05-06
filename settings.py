@@ -11,6 +11,7 @@ DEFAULTS = {
     # Tool paths — auto-detected if blank.
     "kcc_path":       "",
     "kls_path":       "",
+    "kbackend_path":  "",
     # Window
     "window_geom":    "",
     "window_state":   "",
@@ -75,6 +76,18 @@ def resolve_kls(s):
     return find_tool(
         s.get("kls_path", ""),
         "kls.exe",
+        [
+            r"C:\Users\brian\Documents\GitHub\krypton",
+            r"C:\Program Files\Krypton",
+            r"C:\Program Files (x86)\Krypton",
+        ],
+    )
+
+
+def resolve_kbackend(s):
+    return find_tool(
+        s.get("kbackend_path", ""),
+        "kbackend.exe",
         [
             r"C:\Users\brian\Documents\GitHub\krypton",
             r"C:\Program Files\Krypton",
