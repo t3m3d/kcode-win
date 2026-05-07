@@ -1293,6 +1293,179 @@ static char* kr_callptr4(char* fn,char* a0,char* a1,char* a2,char* a3){return ((
 static char* kr_mkclosure(const char* fn,const char* env){int fl=strlen(fn),el=strlen(env);char* p=_alloc(fl+el+2);memcpy(p,fn,fl);p[fl]='|';memcpy(p+fl+1,env,el+1);return p;}
 static char* kr_closure_fn(const char* c){const char* p=strchr(c,'|');if(!p)return(char*)c;int n=p-c;char* r2=_alloc(n+1);memcpy(r2,c,n);r2[n]=0;return r2;}
 static char* kr_closure_env(const char* c){const char* p=strchr(c,'|');return p?(char*)(p+1):(char*)_K_EMPTY;}
+// --- imported: c:/Users/brian/Documents/GitHub/krypton/headers/../stdlib/jsonrpc.k ---
+char* krLspInit();
+char* krLspReadFrame();
+char* krLspWriteFrame(char*);
+char* krLspLog(char*);
+
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #ifdef _WIN32
+        #include <io.h>
+        #include <fcntl.h>
+        #define KR_STRNICMP _strnicmp
+    #else
+        #include <strings.h>     // strncasecmp on POSIX
+        #define KR_STRNICMP strncasecmp
+    #endif
+
+    static int g_inited = 0;
+
+    char* krLspInit(void) {
+        if (!g_inited) {
+            #ifdef _WIN32
+                // Defeat CRLF translation; binary mode preserves \r\n in headers
+                // and clean byte counts in bodies.
+                _setmode(_fileno(stdin),  _O_BINARY);
+                _setmode(_fileno(stdout), _O_BINARY);
+            #endif
+            // POSIX stdin/stdout are already byte-clean — no setmode needed.
+            // Disable buffering on stdout so frames flush immediately.
+            setvbuf(stdout, NULL, _IONBF, 0);
+            // Line-buffer stderr so logs interleave readably.
+            setvbuf(stderr, NULL, _IOLBF, 0);
+            g_inited = 1;
+        }
+        return (char*)"1";
+    }
+
+    // Reads one JSON-RPC frame. Returns a malloc'd null-terminated string
+    // containing the body. Returns NULL-equivalent (a static "") on EOF.
+    char* krLspReadFrame(void) {
+        char header[256];
+        int contentLen = -1;
+
+        for (;;) {
+            int hi = 0;
+            // Read one CRLF-terminated header line.
+            for (;;) {
+                int ch = fgetc(stdin);
+                if (ch == EOF) return (char*)"";
+                if (ch == '\r') {
+                    int nx = fgetc(stdin);
+                    if (nx == '\n') break;
+                    if (nx == EOF) return (char*)"";
+                    if (hi < (int)sizeof(header) - 2) {
+                        header[hi++] = (char)ch;
+                        header[hi++] = (char)nx;
+                    }
+                } else if (ch == '\n') {
+                    // tolerate bare LF
+                    break;
+                } else {
+                    if (hi < (int)sizeof(header) - 1) header[hi++] = (char)ch;
+                }
+            }
+            header[hi] = 0;
+
+            // Empty line — end of header block.
+            if (hi == 0) break;
+
+            // Parse "Content-Length: N"
+            const char* prefix = "Content-Length:";
+            size_t plen = strlen(prefix);
+            if (hi >= (int)plen && KR_STRNICMP(header, prefix, plen) == 0) {
+                const char* p = header + plen;
+                while (*p == ' ' || *p == '\t') p++;
+                contentLen = atoi(p);
+            }
+            // Other headers (Content-Type) ignored.
+        }
+
+        if (contentLen < 0) return (char*)"";
+        if (contentLen == 0) {
+            char* empty = (char*)malloc(1);
+            empty[0] = 0;
+            return empty;
+        }
+
+        char* buf = (char*)malloc((size_t)contentLen + 1);
+        if (!buf) return (char*)"";
+        size_t got = 0;
+        while (got < (size_t)contentLen) {
+            size_t n = fread(buf + got, 1, (size_t)contentLen - got, stdin);
+            if (n == 0) { free(buf); return (char*)""; }
+            got += n;
+        }
+        buf[contentLen] = 0;
+        return buf;
+    }
+
+    char* krLspWriteFrame(char* body) {
+        if (!body) body = (char*)"";
+        size_t n = strlen(body);
+        fprintf(stdout, "Content-Length: %zu\r\n\r\n", n);
+        fwrite(body, 1, n, stdout);
+        fflush(stdout);
+        return (char*)"1";
+    }
+
+    char* krLspLog(char* s) {
+        if (s) fprintf(stderr, "[kls] %s\n", s);
+        else   fprintf(stderr, "[kls] (null)\n");
+        fflush(stderr);
+        return (char*)"1";
+    }
+
+char* jrInit();
+char* jrReadFrame();
+char* jrWriteFrame(char*);
+char* jrLog(char*);
+// --- imported: c:/Users/brian/Documents/GitHub/krypton/headers/../stdlib/json_emit.k ---
+char* jeStr(char*);
+char* jeNum(char*);
+char* jeBool(char*);
+char* jeNull();
+char* jeRaw(char*);
+char* jeObj0();
+char* jeObj(char*, char*);
+char* jeObj2(char*, char*, char*, char*);
+char* jeObj3(char*, char*, char*, char*, char*, char*);
+char* jeObj4(char*, char*, char*, char*, char*, char*, char*, char*);
+char* jeArr0();
+char* jeArr1(char*);
+char* jeArr2(char*, char*);
+char* jeArrFrom(char*);
+char* jePos(char*, char*);
+char* jeRange(char*, char*, char*, char*);
+char* jeDiagnostic(char*, char*, char*, char*, char*, char*);
+// --- imported: c:/Users/brian/Documents/GitHub/krypton/headers/../stdlib/json_parse.k ---
+char* sepRes();
+char* sepEntry();
+char* sepKV();
+char* jmNew();
+char* jmSet(char*, char*, char*);
+char* jmGet(char*, char*);
+char* jmHas(char*, char*);
+char* jpParse(char*);
+char* jpGet(char*, char*);
+char* jpTypeOf(char*, char*);
+char* jpHas(char*, char*);
+char* jpArrLen(char*, char*);
+char* jpObjKeys(char*, char*);
+char* jpNew(char*);
+char* jpHeaderField(char*, char*);
+char* jpI(char*);
+char* jpLine(char*);
+char* jpCol(char*);
+char* jpText(char*);
+char* jpAdv(char*, char*);
+char* jpPeek(char*);
+char* jpSkipWS(char*);
+char* jpRes(char*, char*);
+char* jpStOf(char*);
+char* jpMap(char*);
+char* jpRecord(char*, char*, char*, char*);
+char* jpParseValue(char*, char*, char*);
+char* jpParseString(char*, char*, char*);
+char* jpParseNumber(char*, char*, char*);
+char* jpParseBool(char*, char*, char*);
+char* jpParseNull(char*, char*, char*);
+char* jpJoin(char*, char*);
+char* jpParseObject(char*, char*, char*);
+char* jpParseArray(char*, char*, char*);
 // --- imported: backend/build.k ---
 char* krBuildExec(char*, char*);
 
@@ -1339,6 +1512,692 @@ char* krBuildExec(char*, char*);
     }
 
 char* bExecStream(char*, char*);
+
+char* jrInit() {
+    return ((char*(*)(void))krLspInit)();
+}
+
+char* jrReadFrame() {
+    return ((char*(*)(void))krLspReadFrame)();
+}
+
+char* jrWriteFrame(char* b) {
+    return ((char*(*)(char*))krLspWriteFrame)(b);
+}
+
+char* jrLog(char* s) {
+    return ((char*(*)(char*))krLspLog)(s);
+}
+
+char* jeStr(char* s) {
+    char* sb = kr_sbnew();
+    sb = kr_sbappend(sb, kr_str("\""));
+    char* i = kr_str("0");
+    while (kr_truthy(kr_lt(i, kr_len(s)))) {
+        char* c = kr_idx(s, kr_atoi(i));
+        if (kr_truthy(kr_eq(c, kr_str("\\")))) {
+            sb = kr_sbappend(sb, kr_str("\\\\"));
+        } else if (kr_truthy(kr_eq(c, kr_str("\"")))) {
+            sb = kr_sbappend(sb, kr_str("\\\""));
+        } else if (kr_truthy(kr_eq(c, kr_str("\n")))) {
+            sb = kr_sbappend(sb, kr_str("\\n"));
+        } else if (kr_truthy(kr_eq(c, kr_str("\\r")))) {
+            sb = kr_sbappend(sb, kr_str("\\r"));
+        } else if (kr_truthy(kr_eq(c, kr_str("\t")))) {
+            sb = kr_sbappend(sb, kr_str("\\t"));
+        } else if (kr_truthy(kr_eq(c, kr_str("\\b")))) {
+            sb = kr_sbappend(sb, kr_str("\\b"));
+        } else if (kr_truthy(kr_eq(c, kr_str("\\f")))) {
+            sb = kr_sbappend(sb, kr_str("\\f"));
+        } else if (kr_truthy(kr_lt(kr_charcode(c), kr_str("32")))) {
+            char* v = kr_charcode(c);
+            sb = kr_sbappend(sb, kr_str("\\u00"));
+            sb = kr_sbappend(sb, kr_hex(kr_div(v, kr_str("16"))));
+            sb = kr_sbappend(sb, kr_hex(kr_mod(v, kr_str("16"))));
+        } else {
+            sb = kr_sbappend(sb, c);
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    sb = kr_sbappend(sb, kr_str("\""));
+    return kr_sbtostring(sb);
+}
+
+char* jeNum(char* n) {
+    return kr_plus(n, kr_str(""));
+}
+
+char* jeBool(char* b) {
+    if (kr_truthy(kr_eq(b, kr_str("0")))) {
+        return kr_str("false");
+    }
+    return kr_str("true");
+}
+
+char* jeNull() {
+    return kr_str("null");
+}
+
+char* jeRaw(char* s) {
+    return s;
+}
+
+char* jeObj0() {
+    return kr_str("{}");
+}
+
+char* jeObj(char* k1, char* v1) {
+    return kr_plus(kr_plus(kr_plus(kr_plus(kr_str("{"), ((char*(*)(char*))jeStr)(k1)), kr_str(":")), v1), kr_str("}"));
+}
+
+char* jeObj2(char* k1, char* v1, char* k2, char* v2) {
+    return kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_str("{"), ((char*(*)(char*))jeStr)(k1)), kr_str(":")), v1), kr_str(",")), ((char*(*)(char*))jeStr)(k2)), kr_str(":")), v2), kr_str("}"));
+}
+
+char* jeObj3(char* k1, char* v1, char* k2, char* v2, char* k3, char* v3) {
+    return kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_str("{"), ((char*(*)(char*))jeStr)(k1)), kr_str(":")), v1), kr_str(",")), ((char*(*)(char*))jeStr)(k2)), kr_str(":")), v2), kr_str(",")), ((char*(*)(char*))jeStr)(k3)), kr_str(":")), v3), kr_str("}"));
+}
+
+char* jeObj4(char* k1, char* v1, char* k2, char* v2, char* k3, char* v3, char* k4, char* v4) {
+    char* sb = kr_sbnew();
+    sb = kr_sbappend(sb, kr_str("{"));
+    sb = kr_sbappend(sb, kr_plus(kr_plus(kr_plus(((char*(*)(char*))jeStr)(k1), kr_str(":")), v1), kr_str(",")));
+    sb = kr_sbappend(sb, kr_plus(kr_plus(kr_plus(((char*(*)(char*))jeStr)(k2), kr_str(":")), v2), kr_str(",")));
+    sb = kr_sbappend(sb, kr_plus(kr_plus(kr_plus(((char*(*)(char*))jeStr)(k3), kr_str(":")), v3), kr_str(",")));
+    sb = kr_sbappend(sb, kr_plus(kr_plus(((char*(*)(char*))jeStr)(k4), kr_str(":")), v4));
+    sb = kr_sbappend(sb, kr_str("}"));
+    return kr_sbtostring(sb);
+}
+
+char* jeArr0() {
+    return kr_str("[]");
+}
+
+char* jeArr1(char* a) {
+    return kr_plus(kr_plus(kr_str("["), a), kr_str("]"));
+}
+
+char* jeArr2(char* a, char* b) {
+    return kr_plus(kr_plus(kr_plus(kr_plus(kr_str("["), a), kr_str(",")), b), kr_str("]"));
+}
+
+char* jeArrFrom(char* tabList) {
+    if (kr_truthy(kr_eq(tabList, kr_str("")))) {
+        return kr_str("[]");
+    }
+    char* sb = kr_sbnew();
+    sb = kr_sbappend(sb, kr_str("["));
+    char* n = kr_len(tabList);
+    char* i = kr_str("0");
+    char* start = kr_str("0");
+    char* first = kr_str("1");
+    while (kr_truthy(kr_lt(i, n))) {
+        if (kr_truthy(kr_eq(kr_idx(tabList, kr_atoi(i)), kr_str("\t")))) {
+            if (kr_truthy(kr_eq(first, kr_str("0")))) {
+                sb = kr_sbappend(sb, kr_str(","));
+            }
+            sb = kr_sbappend(sb, kr_substr(tabList, start, i));
+            first = kr_str("0");
+            start = kr_plus(i, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    if (kr_truthy(kr_eq(first, kr_str("0")))) {
+        sb = kr_sbappend(sb, kr_str(","));
+    }
+    sb = kr_sbappend(sb, kr_substr(tabList, start, n));
+    sb = kr_sbappend(sb, kr_str("]"));
+    return kr_sbtostring(sb);
+}
+
+char* jePos(char* line, char* col) {
+    return ((char*(*)(char*,char*,char*,char*))jeObj2)(kr_str("line"), ((char*(*)(char*))jeNum)(line), kr_str("character"), ((char*(*)(char*))jeNum)(col));
+}
+
+char* jeRange(char* sl, char* sc, char* el, char* ec) {
+    return ((char*(*)(char*,char*,char*,char*))jeObj2)(kr_str("start"), ((char*(*)(char*,char*))jePos)(sl, sc), kr_str("end"), ((char*(*)(char*,char*))jePos)(el, ec));
+}
+
+char* jeDiagnostic(char* sl, char* sc, char* el, char* ec, char* severity, char* message) {
+    return ((char*(*)(char*,char*,char*,char*,char*,char*))jeObj3)(kr_str("range"), ((char*(*)(char*,char*,char*,char*))jeRange)(sl, sc, el, ec), kr_str("severity"), ((char*(*)(char*))jeNum)(severity), kr_str("message"), ((char*(*)(char*))jeStr)(message));
+}
+
+char* sepRes() {
+    return kr_fromcharcode(kr_str("2"));
+}
+
+char* sepEntry() {
+    return kr_fromcharcode(kr_str("3"));
+}
+
+char* sepKV() {
+    return kr_fromcharcode(kr_str("4"));
+}
+
+char* jmNew() {
+    return kr_str("");
+}
+
+char* jmSet(char* m, char* k, char* v) {
+    char* n = kr_len(m);
+    char* i = kr_str("0");
+    char* entryStart = kr_str("0");
+    char* sb = kr_sbnew();
+    char* replaced = kr_str("0");
+    while (kr_truthy(kr_lt(i, n))) {
+        if (kr_truthy(kr_eq(kr_idx(m, kr_atoi(i)), ((char*(*)(void))sepEntry)()))) {
+            char* entry = kr_substr(m, entryStart, i);
+            char* sep = kr_neg(kr_str("1"));
+            char* j = kr_str("0");
+            while (kr_truthy(kr_lt(j, kr_len(entry)))) {
+                if (kr_truthy(kr_eq(kr_idx(entry, kr_atoi(j)), ((char*(*)(void))sepKV)()))) {
+                    sep = j;
+                    break;
+                }
+                j = kr_plus(j, kr_str("1"));
+            }
+            if (kr_truthy(kr_gte(sep, kr_str("0")))) {
+                char* kk = kr_substr(entry, kr_str("0"), sep);
+                if (kr_truthy(kr_eq(kk, k))) {
+                    sb = kr_sbappend(sb, kr_plus(kr_plus(kr_plus(kk, ((char*(*)(void))sepKV)()), v), ((char*(*)(void))sepEntry)()));
+                    replaced = kr_str("1");
+                } else {
+                    sb = kr_sbappend(sb, kr_plus(entry, ((char*(*)(void))sepEntry)()));
+                }
+            }
+            entryStart = kr_plus(i, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    if (kr_truthy(kr_eq(replaced, kr_str("0")))) {
+        sb = kr_sbappend(sb, kr_plus(kr_plus(kr_plus(k, ((char*(*)(void))sepKV)()), v), ((char*(*)(void))sepEntry)()));
+    }
+    return kr_sbtostring(sb);
+}
+
+char* jmGet(char* m, char* k) {
+    char* n = kr_len(m);
+    char* i = kr_str("0");
+    char* entryStart = kr_str("0");
+    while (kr_truthy(kr_lt(i, n))) {
+        if (kr_truthy(kr_eq(kr_idx(m, kr_atoi(i)), ((char*(*)(void))sepEntry)()))) {
+            char* entry = kr_substr(m, entryStart, i);
+            char* sep = kr_neg(kr_str("1"));
+            char* j = kr_str("0");
+            while (kr_truthy(kr_lt(j, kr_len(entry)))) {
+                if (kr_truthy(kr_eq(kr_idx(entry, kr_atoi(j)), ((char*(*)(void))sepKV)()))) {
+                    sep = j;
+                    break;
+                }
+                j = kr_plus(j, kr_str("1"));
+            }
+            if (kr_truthy(kr_gte(sep, kr_str("0")))) {
+                char* kk = kr_substr(entry, kr_str("0"), sep);
+                if (kr_truthy(kr_eq(kk, k))) {
+                    return kr_substr(entry, kr_plus(sep, kr_str("1")), kr_len(entry));
+                }
+            }
+            entryStart = kr_plus(i, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return kr_str("");
+}
+
+char* jmHas(char* m, char* k) {
+    char* n = kr_len(m);
+    char* i = kr_str("0");
+    char* entryStart = kr_str("0");
+    while (kr_truthy(kr_lt(i, n))) {
+        if (kr_truthy(kr_eq(kr_idx(m, kr_atoi(i)), ((char*(*)(void))sepEntry)()))) {
+            char* entry = kr_substr(m, entryStart, i);
+            char* sep = kr_neg(kr_str("1"));
+            char* j = kr_str("0");
+            while (kr_truthy(kr_lt(j, kr_len(entry)))) {
+                if (kr_truthy(kr_eq(kr_idx(entry, kr_atoi(j)), ((char*(*)(void))sepKV)()))) {
+                    sep = j;
+                    break;
+                }
+                j = kr_plus(j, kr_str("1"));
+            }
+            if (kr_truthy(kr_gte(sep, kr_str("0")))) {
+                char* kk = kr_substr(entry, kr_str("0"), sep);
+                if (kr_truthy(kr_eq(kk, k))) {
+                    return kr_str("1");
+                }
+            }
+            entryStart = kr_plus(i, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return kr_str("0");
+}
+
+char* jpParse(char* text) {
+    char* m = ((char*(*)(void))jmNew)();
+    char* st = ((char*(*)(char*))jpNew)(text);
+    st = ((char*(*)(char*))jpSkipWS)(st);
+    char* r = ((char*(*)(char*,char*,char*))jpParseValue)(st, kr_str(""), m);
+    return ((char*(*)(char*))jpMap)(r);
+}
+
+char* jpGet(char* m, char* path) {
+    return ((char*(*)(char*,char*))jmGet)(m, path);
+}
+
+char* jpTypeOf(char* m, char* path) {
+    return ((char*(*)(char*,char*))jmGet)(m, kr_plus(kr_str("__type__\t"), path));
+}
+
+char* jpHas(char* m, char* path) {
+    return ((char*(*)(char*,char*))jmHas)(m, path);
+}
+
+char* jpArrLen(char* m, char* path) {
+    char* v = ((char*(*)(char*,char*))jmGet)(m, kr_plus(path, kr_str(".__len__")));
+    if (kr_truthy(kr_eq(v, kr_str("")))) {
+        return kr_str("0");
+    }
+    return kr_toint(v);
+}
+
+char* jpObjKeys(char* m, char* path) {
+    return ((char*(*)(char*,char*))jmGet)(m, kr_plus(path, kr_str(".__keys__")));
+}
+
+char* jpNew(char* text) {
+    return kr_plus(kr_str("0\t0\t0\t"), text);
+}
+
+char* jpHeaderField(char* st, char* idx) {
+    char* n = kr_len(st);
+    char* i = kr_str("0");
+    char* cur = kr_str("0");
+    char* start = kr_str("0");
+    while (kr_truthy(kr_lt(i, n))) {
+        if (kr_truthy(kr_eq(kr_idx(st, kr_atoi(i)), kr_str("\t")))) {
+            if (kr_truthy(kr_eq(cur, idx))) {
+                return kr_substr(st, start, i);
+            }
+            cur = kr_plus(cur, kr_str("1"));
+            start = kr_plus(i, kr_str("1"));
+            if (kr_truthy(kr_gt(cur, idx))) {
+                break;
+            }
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return kr_str("0");
+}
+
+char* jpI(char* st) {
+    return kr_toint(((char*(*)(char*,char*))jpHeaderField)(st, kr_str("0")));
+}
+
+char* jpLine(char* st) {
+    return kr_toint(((char*(*)(char*,char*))jpHeaderField)(st, kr_str("1")));
+}
+
+char* jpCol(char* st) {
+    return kr_toint(((char*(*)(char*,char*))jpHeaderField)(st, kr_str("2")));
+}
+
+char* jpText(char* st) {
+    char* i = kr_str("0");
+    char* tabs = kr_str("0");
+    while (kr_truthy((kr_truthy(kr_lt(i, kr_len(st))) && kr_truthy(kr_lt(tabs, kr_str("3"))) ? kr_str("1") : kr_str("0")))) {
+        if (kr_truthy(kr_eq(kr_idx(st, kr_atoi(i)), kr_str("\t")))) {
+            tabs = kr_plus(tabs, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return kr_substr(st, i, kr_len(st));
+}
+
+char* jpAdv(char* st, char* n) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    char* line = ((char*(*)(char*))jpLine)(st);
+    char* col = ((char*(*)(char*))jpCol)(st);
+    char* k = kr_str("0");
+    while (kr_truthy(kr_lt(k, n))) {
+        if (kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("\n"))) ? kr_str("1") : kr_str("0")))) {
+            line = kr_plus(line, kr_str("1"));
+            col = kr_str("0");
+        } else {
+            col = kr_plus(col, kr_str("1"));
+        }
+        i = kr_plus(i, kr_str("1"));
+        k = kr_plus(k, kr_str("1"));
+    }
+    return kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(kr_plus(i, kr_str("\t")), line), kr_str("\t")), col), kr_str("\t")), txt);
+}
+
+char* jpPeek(char* st) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    if (kr_truthy(kr_gte(i, kr_len(txt)))) {
+        return kr_str("");
+    }
+    return kr_idx(txt, kr_atoi(i));
+}
+
+char* jpSkipWS(char* st) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    while (kr_truthy(kr_lt(i, kr_len(txt)))) {
+        char* c = kr_idx(txt, kr_atoi(i));
+        if (kr_truthy((kr_truthy((kr_truthy((kr_truthy(kr_eq(c, kr_str(" "))) || kr_truthy(kr_eq(c, kr_str("\t"))) ? kr_str("1") : kr_str("0"))) || kr_truthy(kr_eq(c, kr_str("\n"))) ? kr_str("1") : kr_str("0"))) || kr_truthy(kr_eq(c, kr_str("\\r"))) ? kr_str("1") : kr_str("0")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+            i = ((char*(*)(char*))jpI)(st);
+            txt = ((char*(*)(char*))jpText)(st);
+        } else {
+            break;
+        }
+    }
+    return st;
+}
+
+char* jpRes(char* st, char* m) {
+    return kr_plus(kr_plus(st, ((char*(*)(void))sepRes)()), m);
+}
+
+char* jpStOf(char* r) {
+    char* i = kr_str("0");
+    while (kr_truthy(kr_lt(i, kr_len(r)))) {
+        if (kr_truthy(kr_eq(kr_idx(r, kr_atoi(i)), ((char*(*)(void))sepRes)()))) {
+            return kr_substr(r, kr_str("0"), i);
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return r;
+}
+
+char* jpMap(char* r) {
+    char* i = kr_str("0");
+    while (kr_truthy(kr_lt(i, kr_len(r)))) {
+        if (kr_truthy(kr_eq(kr_idx(r, kr_atoi(i)), ((char*(*)(void))sepRes)()))) {
+            return kr_substr(r, kr_plus(i, kr_str("1")), kr_len(r));
+        }
+        i = kr_plus(i, kr_str("1"));
+    }
+    return kr_str("");
+}
+
+char* jpRecord(char* m, char* path, char* typ, char* val) {
+    m = ((char*(*)(char*,char*,char*))jmSet)(m, path, val);
+    m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(kr_str("__type__\t"), path), typ);
+    return m;
+}
+
+char* jpParseValue(char* st, char* path, char* m) {
+    st = ((char*(*)(char*))jpSkipWS)(st);
+    char* c = ((char*(*)(char*))jpPeek)(st);
+    if (kr_truthy(kr_eq(c, kr_str("\"")))) {
+        return ((char*(*)(char*,char*,char*))jpParseString)(st, path, m);
+    }
+    if (kr_truthy(kr_eq(c, kr_str("{")))) {
+        return ((char*(*)(char*,char*,char*))jpParseObject)(st, path, m);
+    }
+    if (kr_truthy(kr_eq(c, kr_str("[")))) {
+        return ((char*(*)(char*,char*,char*))jpParseArray)(st, path, m);
+    }
+    if (kr_truthy((kr_truthy(kr_eq(c, kr_str("t"))) || kr_truthy(kr_eq(c, kr_str("f"))) ? kr_str("1") : kr_str("0")))) {
+        return ((char*(*)(char*,char*,char*))jpParseBool)(st, path, m);
+    }
+    if (kr_truthy(kr_eq(c, kr_str("n")))) {
+        return ((char*(*)(char*,char*,char*))jpParseNull)(st, path, m);
+    }
+    if (kr_truthy((kr_truthy(kr_eq(c, kr_str("-"))) || kr_truthy((kr_truthy(kr_gte(c, kr_str("0"))) && kr_truthy(kr_lte(c, kr_str("9"))) ? kr_str("1") : kr_str("0"))) ? kr_str("1") : kr_str("0")))) {
+        return ((char*(*)(char*,char*,char*))jpParseNumber)(st, path, m);
+    }
+    st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpParseString(char* st, char* path, char* m) {
+    st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    char* sb = kr_sbnew();
+    while (kr_truthy(kr_lt(i, kr_len(txt)))) {
+        char* c = kr_idx(txt, kr_atoi(i));
+        if (kr_truthy(kr_eq(c, kr_str("\"")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_plus(kr_sub(i, ((char*(*)(char*))jpI)(st)), kr_str("1")));
+            break;
+        }
+        if (kr_truthy((kr_truthy(kr_eq(c, kr_str("\\"))) && kr_truthy(kr_lt(kr_plus(i, kr_str("1")), kr_len(txt))) ? kr_str("1") : kr_str("0")))) {
+            char* esc = kr_idx(txt, kr_atoi(kr_plus(i, kr_str("1"))));
+            if (kr_truthy(kr_eq(esc, kr_str("\"")))) {
+                sb = kr_sbappend(sb, kr_str("\""));
+            } else if (kr_truthy(kr_eq(esc, kr_str("\\")))) {
+                sb = kr_sbappend(sb, kr_str("\\"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("/")))) {
+                sb = kr_sbappend(sb, kr_str("/"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("n")))) {
+                sb = kr_sbappend(sb, kr_str("\n"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("t")))) {
+                sb = kr_sbappend(sb, kr_str("\t"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("r")))) {
+                sb = kr_sbappend(sb, kr_str("\\r"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("b")))) {
+                sb = kr_sbappend(sb, kr_str("\\b"));
+            } else if (kr_truthy(kr_eq(esc, kr_str("f")))) {
+                sb = kr_sbappend(sb, kr_str("\\f"));
+            } else if (kr_truthy((kr_truthy(kr_eq(esc, kr_str("u"))) && kr_truthy(kr_lt(kr_plus(i, kr_str("5")), kr_len(txt))) ? kr_str("1") : kr_str("0")))) {
+                char* h = kr_substr(txt, kr_plus(i, kr_str("2")), kr_plus(i, kr_str("6")));
+                char* v = kr_str("0");
+                char* k = kr_str("0");
+                while (kr_truthy(kr_lt(k, kr_str("4")))) {
+                    char* hc = kr_idx(h, kr_atoi(k));
+                    char* d = kr_str("0");
+                    if (kr_truthy((kr_truthy(kr_gte(hc, kr_str("0"))) && kr_truthy(kr_lte(hc, kr_str("9"))) ? kr_str("1") : kr_str("0")))) {
+                        d = kr_sub(kr_charcode(hc), kr_charcode(kr_str("0")));
+                    } else if (kr_truthy((kr_truthy(kr_gte(hc, kr_str("a"))) && kr_truthy(kr_lte(hc, kr_str("f"))) ? kr_str("1") : kr_str("0")))) {
+                        d = kr_plus(kr_sub(kr_charcode(hc), kr_charcode(kr_str("a"))), kr_str("10"));
+                    } else if (kr_truthy((kr_truthy(kr_gte(hc, kr_str("A"))) && kr_truthy(kr_lte(hc, kr_str("F"))) ? kr_str("1") : kr_str("0")))) {
+                        d = kr_plus(kr_sub(kr_charcode(hc), kr_charcode(kr_str("A"))), kr_str("10"));
+                    }
+                    v = kr_plus(kr_mul(v, kr_str("16")), d);
+                    k = kr_plus(k, kr_str("1"));
+                }
+                if (kr_truthy(kr_lt(v, kr_str("128")))) {
+                    sb = kr_sbappend(sb, kr_fromcharcode(v));
+                }
+                i = kr_plus(i, kr_str("4"));
+            } else {
+                sb = kr_sbappend(sb, esc);
+            }
+            i = kr_plus(i, kr_str("2"));
+            continue;
+        }
+        sb = kr_sbappend(sb, c);
+        i = kr_plus(i, kr_str("1"));
+    }
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*,char*))jpRecord)(m, path, kr_str("s"), kr_sbtostring(sb));
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpParseNumber(char* st, char* path, char* m) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* start = ((char*(*)(char*))jpI)(st);
+    char* i = start;
+    if (kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("-"))) ? kr_str("1") : kr_str("0")))) {
+        i = kr_plus(i, kr_str("1"));
+    }
+    while (kr_truthy((kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_gte(kr_idx(txt, kr_atoi(i)), kr_str("0"))) ? kr_str("1") : kr_str("0"))) && kr_truthy(kr_lte(kr_idx(txt, kr_atoi(i)), kr_str("9"))) ? kr_str("1") : kr_str("0")))) {
+        i = kr_plus(i, kr_str("1"));
+    }
+    if (kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("."))) ? kr_str("1") : kr_str("0")))) {
+        i = kr_plus(i, kr_str("1"));
+        while (kr_truthy((kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_gte(kr_idx(txt, kr_atoi(i)), kr_str("0"))) ? kr_str("1") : kr_str("0"))) && kr_truthy(kr_lte(kr_idx(txt, kr_atoi(i)), kr_str("9"))) ? kr_str("1") : kr_str("0")))) {
+            i = kr_plus(i, kr_str("1"));
+        }
+    }
+    if (kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy((kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("e"))) || kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("E"))) ? kr_str("1") : kr_str("0"))) ? kr_str("1") : kr_str("0")))) {
+        i = kr_plus(i, kr_str("1"));
+        if (kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy((kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("+"))) || kr_truthy(kr_eq(kr_idx(txt, kr_atoi(i)), kr_str("-"))) ? kr_str("1") : kr_str("0"))) ? kr_str("1") : kr_str("0")))) {
+            i = kr_plus(i, kr_str("1"));
+        }
+        while (kr_truthy((kr_truthy((kr_truthy(kr_lt(i, kr_len(txt))) && kr_truthy(kr_gte(kr_idx(txt, kr_atoi(i)), kr_str("0"))) ? kr_str("1") : kr_str("0"))) && kr_truthy(kr_lte(kr_idx(txt, kr_atoi(i)), kr_str("9"))) ? kr_str("1") : kr_str("0")))) {
+            i = kr_plus(i, kr_str("1"));
+        }
+    }
+    char* val = kr_substr(txt, start, i);
+    st = ((char*(*)(char*,char*))jpAdv)(st, kr_sub(i, start));
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*,char*))jpRecord)(m, path, kr_str("n"), val);
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpParseBool(char* st, char* path, char* m) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    if (kr_truthy((kr_truthy(kr_lte(kr_plus(i, kr_str("4")), kr_len(txt))) && kr_truthy(kr_eq(kr_substr(txt, i, kr_plus(i, kr_str("4"))), kr_str("true"))) ? kr_str("1") : kr_str("0")))) {
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("4"));
+        if (kr_truthy(kr_neq(path, kr_str("")))) {
+            m = ((char*(*)(char*,char*,char*,char*))jpRecord)(m, path, kr_str("b"), kr_str("true"));
+        }
+        return ((char*(*)(char*,char*))jpRes)(st, m);
+    }
+    if (kr_truthy((kr_truthy(kr_lte(kr_plus(i, kr_str("5")), kr_len(txt))) && kr_truthy(kr_eq(kr_substr(txt, i, kr_plus(i, kr_str("5"))), kr_str("false"))) ? kr_str("1") : kr_str("0")))) {
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("5"));
+        if (kr_truthy(kr_neq(path, kr_str("")))) {
+            m = ((char*(*)(char*,char*,char*,char*))jpRecord)(m, path, kr_str("b"), kr_str("false"));
+        }
+        return ((char*(*)(char*,char*))jpRes)(st, m);
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpParseNull(char* st, char* path, char* m) {
+    char* txt = ((char*(*)(char*))jpText)(st);
+    char* i = ((char*(*)(char*))jpI)(st);
+    if (kr_truthy((kr_truthy(kr_lte(kr_plus(i, kr_str("4")), kr_len(txt))) && kr_truthy(kr_eq(kr_substr(txt, i, kr_plus(i, kr_str("4"))), kr_str("null"))) ? kr_str("1") : kr_str("0")))) {
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("4"));
+        if (kr_truthy(kr_neq(path, kr_str("")))) {
+            m = ((char*(*)(char*,char*,char*,char*))jpRecord)(m, path, kr_str("z"), kr_str(""));
+        }
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpJoin(char* parent, char* child) {
+    if (kr_truthy(kr_eq(parent, kr_str("")))) {
+        return child;
+    }
+    return kr_plus(kr_plus(parent, kr_str(".")), child);
+}
+
+char* jpParseObject(char* st, char* path, char* m) {
+    st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+    st = ((char*(*)(char*))jpSkipWS)(st);
+    char* keys = kr_str("");
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(kr_str("__type__\t"), path), kr_str("obj"));
+    }
+    if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str("}")))) {
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+        if (kr_truthy(kr_neq(path, kr_str("")))) {
+            m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(path, kr_str(".__keys__")), keys);
+        }
+        return ((char*(*)(char*,char*))jpRes)(st, m);
+    }
+    while (kr_truthy(kr_lt(((char*(*)(char*))jpI)(st), kr_len(((char*(*)(char*))jpText)(st))))) {
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        if (kr_truthy(kr_neq(((char*(*)(char*))jpPeek)(st), kr_str("\"")))) {
+            break;
+        }
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+        char* txt = ((char*(*)(char*))jpText)(st);
+        char* ki = ((char*(*)(char*))jpI)(st);
+        char* kSb = kr_sbnew();
+        while (kr_truthy(kr_lt(ki, kr_len(txt)))) {
+            char* c = kr_idx(txt, kr_atoi(ki));
+            if (kr_truthy(kr_eq(c, kr_str("\"")))) {
+                break;
+            }
+            if (kr_truthy((kr_truthy(kr_eq(c, kr_str("\\"))) && kr_truthy(kr_lt(kr_plus(ki, kr_str("1")), kr_len(txt))) ? kr_str("1") : kr_str("0")))) {
+                kSb = kr_sbappend(kSb, kr_idx(txt, kr_atoi(kr_plus(ki, kr_str("1")))));
+                ki = kr_plus(ki, kr_str("2"));
+                continue;
+            }
+            kSb = kr_sbappend(kSb, c);
+            ki = kr_plus(ki, kr_str("1"));
+        }
+        char* keyName = kr_sbtostring(kSb);
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_plus(kr_sub(ki, ((char*(*)(char*))jpI)(st)), kr_str("1")));
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str(":")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+        }
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        char* childPath = ((char*(*)(char*,char*))jpJoin)(path, keyName);
+        char* r = ((char*(*)(char*,char*,char*))jpParseValue)(st, childPath, m);
+        st = ((char*(*)(char*))jpStOf)(r);
+        m = ((char*(*)(char*))jpMap)(r);
+        if (kr_truthy(kr_eq(keys, kr_str("")))) {
+            keys = keyName;
+        } else {
+            keys = kr_plus(kr_plus(keys, kr_str(",")), keyName);
+        }
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str(",")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+            continue;
+        }
+        if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str("}")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+            break;
+        }
+        break;
+    }
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(path, kr_str(".__keys__")), keys);
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
+
+char* jpParseArray(char* st, char* path, char* m) {
+    st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+    st = ((char*(*)(char*))jpSkipWS)(st);
+    char* idx = kr_str("0");
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(kr_str("__type__\t"), path), kr_str("arr"));
+    }
+    if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str("]")))) {
+        st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+        if (kr_truthy(kr_neq(path, kr_str("")))) {
+            m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(path, kr_str(".__len__")), kr_str("0"));
+        }
+        return ((char*(*)(char*,char*))jpRes)(st, m);
+    }
+    while (kr_truthy(kr_lt(((char*(*)(char*))jpI)(st), kr_len(((char*(*)(char*))jpText)(st))))) {
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        char* childPath = ((char*(*)(char*,char*))jpJoin)(path, kr_plus(idx, kr_str("")));
+        char* r = ((char*(*)(char*,char*,char*))jpParseValue)(st, childPath, m);
+        st = ((char*(*)(char*))jpStOf)(r);
+        m = ((char*(*)(char*))jpMap)(r);
+        idx = kr_plus(idx, kr_str("1"));
+        st = ((char*(*)(char*))jpSkipWS)(st);
+        if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str(",")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+            continue;
+        }
+        if (kr_truthy(kr_eq(((char*(*)(char*))jpPeek)(st), kr_str("]")))) {
+            st = ((char*(*)(char*,char*))jpAdv)(st, kr_str("1"));
+            break;
+        }
+        break;
+    }
+    if (kr_truthy(kr_neq(path, kr_str("")))) {
+        m = ((char*(*)(char*,char*,char*))jmSet)(m, kr_plus(path, kr_str(".__len__")), kr_plus(idx, kr_str("")));
+    }
+    return ((char*(*)(char*,char*))jpRes)(st, m);
+}
 
 char* bExecStream(char* cmd, char* sinkPtr) {
     return ((char*(*)(char*,char*))krBuildExec)(cmd, sinkPtr);
@@ -1457,6 +2316,3 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-kcc: import not found: stdlib/jsonrpc.k
-kcc: import not found: stdlib/json_emit.k
-kcc: import not found: stdlib/json_parse.k

@@ -44,33 +44,63 @@ BUILTINS = (
 class KryptonHighlighter(QSyntaxHighlighter):
     def __init__(self, doc):
         super().__init__(doc)
-        self.fmt_kw       = _fmt("#C586C0", bold=True)
-        self.fmt_builtin  = _fmt("#4EC9B0")
+        self.fmt_kw       = _fmt("#d96565", bold=True)         # red
+        self.fmt_builtin  = _fmt("#4FC1FF")                    # light blue
         self.fmt_string   = _fmt("#CE9178")
-        self.fmt_comment  = _fmt("#6A9955", italic=True)
-        self.fmt_number   = _fmt("#B5CEA8")
-        self.fmt_function = _fmt("#DCDCAA")
-        self.fmt_op       = _fmt("#D4D4D4")
+        # When `comments_hidden` is True we recolor the comment format
+        # to match the editor base so comments visually disappear.
+        # Toggle via set_comments_hidden().
+        self._comments_hidden = False
+        self.fmt_comment_visible = _fmt("#9a9a9a", italic=True)
+        self.fmt_comment_hidden  = _fmt("#1e1e1e", italic=True)
+        self.fmt_comment  = self.fmt_comment_visible
+        self.fmt_number   = _fmt("#4FC1FF")                    # light blue
+        self.fmt_function = _fmt("#b392f0")
+        self.fmt_op       = _fmt("#a01818", bold=True)         # blood red
         self.fmt_decl     = _fmt("#569CD6", bold=True)
+        self.fmt_brace    = _fmt("#4FC1FF")                    # { } light blue
+        self.fmt_paren    = _fmt("#FFA657")                    # ( ) orange
+        self.fmt_var      = _fmt("#c44545")                    # let NAME / const NAME — medium red
 
         kw_pattern = r"\b(" + "|".join(KEYWORDS) + r")\b"
         bi_pattern = r"\b(" + "|".join(BUILTINS) + r")\b"
 
+        # Order matters — later rules overwrite earlier ones at the
+        # same position. Comments + strings go LAST so keyword-shaped
+        # words inside a comment ("// func foo") keep the comment color.
         self._line_rules = [
-            (re.compile(r"//.*$"),                               self.fmt_comment),
-            (re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"'),            self.fmt_string),
-            (re.compile(r"`[^`]*`"),                             self.fmt_string),
             (re.compile(r"\b0[xX][0-9a-fA-F]+\b"),                self.fmt_number),
             (re.compile(r"\b\d+(\.\d+)?\b"),                      self.fmt_number),
             (re.compile(kw_pattern),                              self.fmt_kw),
             (re.compile(bi_pattern),                              self.fmt_builtin),
             (re.compile(r"\b(func|fn|callback)\s+([A-Za-z_]\w*)"),
                                                                   None),
+            # `just run` / `go run` — entry block name gets blood red.
+            (re.compile(r"\b(just|go)\s+([A-Za-z_]\w*)"),         "ENTRY"),
             (re.compile(r"([A-Za-z_]\w*)\s*\("),                  self.fmt_function),
+            (re.compile(r"[{}]"),                                 self.fmt_brace),
+            (re.compile(r"[()]"),                                 self.fmt_paren),
+            # Operators: + = - and friends. Run after keyword/builtin
+            # rules so we don't recolor any letter; only punctuation.
+            (re.compile(r"[+\-*/%=<>!&|^~]+"),                    self.fmt_op),
+            (re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"'),            self.fmt_string),
+            (re.compile(r"`[^`]*`"),                             self.fmt_string),
+            (re.compile(r"//.*$"),                               self.fmt_comment),
         ]
 
         self._block_comment_re = re.compile(r"/\*")
         self._block_comment_end_re = re.compile(r"\*/")
+
+    def set_comments_hidden(self, hidden: bool):
+        """Toggle comment visibility. Hidden comments are recolored to
+        the editor base — text is still there, just invisible."""
+        self._comments_hidden = bool(hidden)
+        self.fmt_comment = self.fmt_comment_hidden if hidden else self.fmt_comment_visible
+        # Re-update both line-rule slot and re-run highlighting.
+        for idx, (rx, fmt) in enumerate(self._line_rules):
+            if fmt is self.fmt_comment_visible or fmt is self.fmt_comment_hidden:
+                self._line_rules[idx] = (rx, self.fmt_comment)
+        self.rehighlight()
 
     def highlightBlock(self, text: str):
         i = 0
@@ -96,7 +126,14 @@ class KryptonHighlighter(QSyntaxHighlighter):
                         continue
                     self.setFormat(i + m.start(1), len(word), fmt)
                 elif fmt is None:
+                    # `func NAME` — color NAME as a function name.
                     self.setFormat(i + m.start(2), len(m.group(2)), self.fmt_function)
+                elif fmt == "ENTRY":
+                    # `just NAME` / `go NAME` — color NAME blood red.
+                    self.setFormat(i + m.start(2), len(m.group(2)), self.fmt_op)
+                elif fmt == "VAR":
+                    # `let NAME` / `const NAME` — color NAME medium red.
+                    self.setFormat(i + m.start(2), len(m.group(2)), self.fmt_var)
                 else:
                     self.setFormat(i + m.start(), m.end() - m.start(), fmt)
 

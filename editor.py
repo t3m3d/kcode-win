@@ -218,7 +218,78 @@ class CodeEditor(QPlainTextEdit):
         if e.key() == Qt.Key_Space and (e.modifiers() & Qt.ControlModifier):
             self._trigger_completion()
             return
+        if e.key() == Qt.Key_Slash and (e.modifiers() & Qt.ControlModifier):
+            self._toggle_line_comment()
+            return
         super().keyPressEvent(e)
+
+    # ── Ctrl+/ — comment / uncomment selection ─────────────────
+
+    def _toggle_line_comment(self):
+        cur = self.textCursor()
+        doc = self.document()
+        # Determine the line range covered by the selection (or just
+        # the cursor line if there's no selection).
+        if cur.hasSelection():
+            start = cur.selectionStart()
+            end   = cur.selectionEnd()
+            first = doc.findBlock(start).blockNumber()
+            last  = doc.findBlock(end).blockNumber()
+            # If the selection ends right at column 0 of a block, that
+            # block isn't really selected — the user wrapped to it.
+            if doc.findBlock(end).position() == end and last > first:
+                last -= 1
+        else:
+            first = last = cur.blockNumber()
+
+        # Decide direction: if every non-empty line already starts with
+        # `//`, uncomment; otherwise comment.
+        all_commented = True
+        any_non_empty = False
+        for n in range(first, last + 1):
+            text = doc.findBlockByNumber(n).text()
+            stripped = text.lstrip()
+            if not stripped:
+                continue
+            any_non_empty = True
+            if not stripped.startswith("//"):
+                all_commented = False
+                break
+        if not any_non_empty:
+            return
+        commenting = not all_commented
+
+        # Apply edits as a single undo step.
+        cur.beginEditBlock()
+        try:
+            for n in range(first, last + 1):
+                block = doc.findBlockByNumber(n)
+                text = block.text()
+                if not text.strip():
+                    continue
+                bcur = QTextCursor(block)
+                if commenting:
+                    # Insert "// " at the indent column so the comment
+                    # follows the code indent, not column 0.
+                    indent_len = len(text) - len(text.lstrip())
+                    bcur.setPosition(block.position() + indent_len)
+                    bcur.insertText("// ")
+                else:
+                    # Remove leading "// " or "//"
+                    stripped = text.lstrip()
+                    indent_len = len(text) - len(stripped)
+                    if stripped.startswith("// "):
+                        rm = 3
+                    elif stripped.startswith("//"):
+                        rm = 2
+                    else:
+                        continue
+                    bcur.setPosition(block.position() + indent_len)
+                    bcur.setPosition(block.position() + indent_len + rm,
+                                     QTextCursor.KeepAnchor)
+                    bcur.removeSelectedText()
+        finally:
+            cur.endEditBlock()
 
     def _trigger_completion(self):
         if not self._uri or not self._lsp:

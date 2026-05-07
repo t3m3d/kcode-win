@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QInputDialog, QLabel, QMainWindow,
@@ -26,6 +26,8 @@ from file_tree import FileTreePane
 from kbackend_client import KbackendClient
 from lsp_client import LspClient
 from output_panel import OutputPanel
+from settings_dialog import SettingsDialog
+from shortcuts_dialog import ShortcutsDialog
 
 
 def uri_to_path(uri: str) -> str:
@@ -101,27 +103,40 @@ class MainWindow(QMainWindow):
         a_save    = QAction("Save",         self, shortcut=QKeySequence.Save,  triggered=self.action_save)
         a_run     = QAction("Run (F5)",     self, shortcut="F5",               triggered=self.action_run)
         a_kill    = QAction("Stop",         self, shortcut="Shift+F5",          triggered=self.action_stop)
-        a_outline = QAction("Outline",      self, triggered=self.action_outline)
+        a_outline  = QAction("Outline",   self, triggered=self.action_outline)
+        self._a_hide_comments = QAction("Hide Comments", self,
+                                        checkable=True,
+                                        triggered=self.action_toggle_comments)
+        a_keys     = QAction("Keys",      self, triggered=self.action_keys)
+        a_settings = QAction("Settings…", self, triggered=self.action_settings)
 
         for a in (a_open, a_open_d, a_save):
             tb.addAction(a)
         tb.addSeparator()
         for a in (a_run, a_kill, a_outline):
             tb.addAction(a)
+        tb.addSeparator()
+        tb.addAction(self._a_hide_comments)
 
-        # Theme switcher pushed to the right side of the toolbar.
+        # Spacer pushes Keys + Settings to the far right.
         from PySide6.QtWidgets import QSizePolicy
         spacer = QWidget(self)
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
-        tb.addWidget(QLabel("Theme: "))
-        self._theme_combo = QComboBox(self)
-        self._theme_combo.addItems(theme.themes())
-        cur_theme = self._settings.get("theme", "dark")
-        if cur_theme in theme.themes():
-            self._theme_combo.setCurrentText(cur_theme)
-        self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
-        tb.addWidget(self._theme_combo)
+        tb.addAction(a_keys)
+        tb.addAction(a_settings)
+
+        # When the active theme is 'system', poll OS dark/light every
+        # 3s so the IDE follows OS changes live (e.g. Windows
+        # auto-switching at sunset). Cheap registry read, only fires
+        # while 'system' is selected.
+        cur_theme = self._settings.get("theme", "system")
+        self._sys_theme_last = theme.detect_os_theme()
+        self._sys_theme_timer = QTimer(self)
+        self._sys_theme_timer.setInterval(3000)
+        self._sys_theme_timer.timeout.connect(self._poll_os_theme)
+        if cur_theme == "system":
+            self._sys_theme_timer.start()
 
         # QShortcut for Ctrl+Shift+O — more reliable than QAction.shortcut
         # because it survives QPlainTextEdit eating the QAction-bound key
@@ -209,22 +224,27 @@ class MainWindow(QMainWindow):
         src = Path(ed.file_path).resolve()
         out_dir = src.parent / ".kcode_build"
         out_dir.mkdir(exist_ok=True)
-        c_path   = out_dir / (src.stem + ".c")
         exe_path = out_dir / (src.stem + ".exe")
 
-        # Compose the full pipeline as a single shell command. cmd.exe
-        # &&-chaining short-circuits on failure so we never link/run a
-        # botched compile, never run an exe that didn't link.
-        cmd = (
-            f'"{self._kcc_path}" "{src}" > "{c_path}"'
-            f' && gcc "{c_path}" -o "{exe_path}" -w'
+        # Native pipeline — kcc emits PE/COFF directly via its x64
+        # backend. No gcc, no C intermediate. This is real self-hosted
+        # Krypton.
+        #
+        # Outer-quote wrapping: cmd /c's quote-stripping rule eats the
+        # first and last `"` of the line, which mangles paths when we
+        # have multiple quoted args. Wrapping in an extra outer pair
+        # means those eaten quotes were ours-to-spare and the inner
+        # quotes survive intact.
+        inner = (
+            f'"{self._kcc_path}" -o "{exe_path}" "{src}"'
             f' && "{exe_path}"'
         )
+        cmd = '"' + inner + '"'
 
         self._output.clear_build()
-        self._output.gc.reset()
         self._output.append_build(f"$ {cmd}\n")
         self._status.showMessage("running…")
+
         self._kbackend.run_shell(cmd)
 
     def _on_build_finished(self, code: int):
@@ -237,9 +257,43 @@ class MainWindow(QMainWindow):
         # but also kill the service. Just no-op with a status message.
         self._status.showMessage("Stop not yet wired through kbackend", 4000)
 
-    def _on_theme_changed(self, name: str):
+    def _apply_theme_live(self, name: str):
+        """Used both by the Settings dialog (live preview) and after
+        accept. Updates the running app + the OS-poll timer."""
         theme.apply(name)
         self._settings["theme"] = name
+        if name == "system":
+            self._sys_theme_last = theme.detect_os_theme()
+            if not self._sys_theme_timer.isActive():
+                self._sys_theme_timer.start()
+        else:
+            self._sys_theme_timer.stop()
+
+    def _poll_os_theme(self):
+        cur = theme.detect_os_theme()
+        if cur != self._sys_theme_last:
+            self._sys_theme_last = cur
+            theme.apply("system")
+
+    def action_settings(self):
+        dlg = SettingsDialog(self._settings, self._apply_theme_live, self)
+        if dlg.exec() == SettingsDialog.Accepted:
+            # Persist immediately so the choice survives a crash before
+            # closeEvent gets a chance to save.
+            settings.save(self._settings)
+            self._apply_theme_live(self._settings.get("theme", "system"))
+
+    def action_keys(self):
+        ShortcutsDialog(self).exec()
+
+    def action_toggle_comments(self):
+        # Apply across every open editor so Hide Comments is global.
+        hidden = self._a_hide_comments.isChecked()
+        self._a_hide_comments.setText("Show Comments" if hidden else "Hide Comments")
+        for i in range(self._tabs.count()):
+            ed = self._tabs.widget(i)
+            if isinstance(ed, CodeEditor) and hasattr(ed, "_highlighter"):
+                ed._highlighter.set_comments_hidden(hidden)
 
     def action_inject_gc(self):
         """Insert a Krypton helper that emits a [GC] line the GC panel

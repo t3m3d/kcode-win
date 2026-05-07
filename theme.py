@@ -1,6 +1,11 @@
 """kcode-win/theme.py — palettes + rounded-corner stylesheet.
 
-Two themes: 'dark' and 'light'. Both apply:
+Three themes:
+  - 'dark'    — VS Code-ish dark
+  - 'light'   — clean white
+  - 'system'  — auto-detect Windows AppsUseLightTheme registry key
+
+All apply:
   - Fusion base style for cross-platform consistency
   - QPalette colors
   - QSS stylesheet with border-radius on tabs, buttons, splitters,
@@ -11,6 +16,8 @@ theme's editor base.
 """
 
 from __future__ import annotations
+
+import winreg
 
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
@@ -327,13 +334,44 @@ def current_line_bg(theme: str) -> str:
 
 # ── Apply ──────────────────────────────────────────────────────
 
+def detect_os_theme() -> str:
+    """Read the Windows AppsUseLightTheme reg key. Returns 'light' or
+    'dark'; defaults to 'dark' if the key is missing."""
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        try:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "light" if int(val) == 1 else "dark"
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        return "dark"
+
+
+def resolve(name: str) -> str:
+    """Map a theme name to a concrete palette name. 'system' becomes
+    'dark' or 'light' based on OS setting; passthrough otherwise."""
+    if name == "system":
+        return detect_os_theme()
+    return name if name in ("dark", "light") else "dark"
+
+
 def apply(theme: str):
-    """Apply a named theme to the running QApplication."""
+    """Apply a named theme to the running QApplication.
+
+    Pass 'system' to auto-pick from OS. The resolution happens here so
+    callers can persist the user's selection ('system') verbatim and
+    pick up future OS changes the next time apply() runs.
+    """
     app = QApplication.instance()
     if not app:
         return
     app.setStyle("Fusion")
-    if theme == "light":
+    actual = resolve(theme)
+    if actual == "light":
         app.setPalette(_palette_light())
         app.setStyleSheet(_LIGHT_QSS)
     else:
@@ -342,4 +380,4 @@ def apply(theme: str):
 
 
 def themes() -> list[str]:
-    return ["dark", "light"]
+    return ["system", "dark", "light"]

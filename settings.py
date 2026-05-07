@@ -21,7 +21,7 @@ DEFAULTS = {
     "font_size":      11,
     "tab_width":      4,
     "show_whitespace": False,
-    "theme":          "dark",      # "dark" | "light"
+    "theme":          "system",    # "system" | "dark" | "light"
     # Last session
     "last_folder":    "",
     "open_files":     [],
@@ -85,10 +85,14 @@ def resolve_kls(s):
 
 
 def resolve_kbackend(s):
+    # kbackend ships next to the IDE itself — check the kcode-win
+    # directory first (alongside main.py), then installed locations.
+    here = Path(__file__).resolve().parent
     return find_tool(
         s.get("kbackend_path", ""),
         "kbackend.exe",
         [
+            str(here),
             r"C:\Users\brian\Documents\GitHub\krypton",
             r"C:\Program Files\Krypton",
             r"C:\Program Files (x86)\Krypton",
