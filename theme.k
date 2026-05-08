@@ -1,40 +1,49 @@
-// kcode-win/theme.k — Krypton port of theme.py.
+// kcode-win/theme.k — palettes + apply.
 //
-// Three named palettes (dark / light / system). Win32-native widgets
-// don't take CSS, so this is a much simpler port than the Qt
-// original — we just track which theme is active in guiState and
-// expose the per-name color codes for the editor to apply via
-// guiRichSetBg / guiRichSetFgDefault. The system theme is auto-
-// resolved against the AppsUseLightTheme registry key.
+// Deep-blue palette is the IDE's default. We don't rely on Win32's
+// automatic dark-mode flip (it's flaky on hosts whose OS theme is
+// set to light); instead we set background/foreground colors
+// directly via guiSetWindowBg, guiTreeSetColors, etc.
 //
 // API:
-//   themeApply(name)                     // "dark" | "light" | "system"
-//   themeBg()                            // -> hex string for editor BG
-//   themeFg()                            // -> hex string for editor FG
-//   themeOutputBg()                      // BG for the output panel
-//
-// Caller is responsible for invoking guiRichSetBg(rich, themeBg())
-// / guiRichSetFgDefault(rich, themeFg()) on each managed widget.
+//   themeApply(name)              // "dark" | "light" | "system"
+//   themePaint(editorRich, output)
+//   themeBg(), themeFg(), themeOutputBg(), themeOutputFg()
+//   themeStatusBg(), themeTreeBg(), themeTreeFg()
 
 import "stdlib/gui.k"
 
 
 // ── Palette tables ──────────────────────────────────────────
-// Stored as flat strings indexed by themeColor(name, key).
 
 func themeColorDark(key) {
-    if key == "bg"        { emit "1e1e1e" }   // editor background
-    if key == "fg"        { emit "d4d4d4" }   // default text
-    if key == "outputBg"  { emit "181818" }
-    if key == "outputFg"  { emit "cccccc" }
+    // Coherent navy palette, getting lighter as we step toward the
+    // editor (the focal surface) so syntax-highlight colors land
+    // with enough contrast to read.
+    if key == "windowBg"  { emit "0d1b2a" }   // chrome (toolbar gap, etc.)
+    if key == "treeBg"    { emit "14213d" }   // file tree
+    if key == "treeFg"    { emit "e0e1dd" }
+    if key == "bg"        { emit "1a2b47" }   // editor — medium navy
+    if key == "fg"        { emit "e0e1dd" }
+    if key == "outputBg"  { emit "11203a" }   // output panel — between tree and editor
+    if key == "outputFg"  { emit "c8c9c4" }
+    if key == "statusBg"  { emit "1d3557" }   // status — match the navy family
+    if key == "uiText"    { emit "e0e1dd" }
+    if key == "statusFg"  { emit "ffffff" }   // crisp white over the dark blue
     emit "ffffff"
 }
 
 func themeColorLight(key) {
+    if key == "windowBg"  { emit "f5f5f7" }
+    if key == "treeBg"    { emit "ffffff" }
+    if key == "treeFg"    { emit "1e1e1e" }
     if key == "bg"        { emit "ffffff" }
     if key == "fg"        { emit "1e1e1e" }
-    if key == "outputBg"  { emit "f5f5f7" }
+    if key == "outputBg"  { emit "f0f0f2" }
     if key == "outputFg"  { emit "1e1e1e" }
+    if key == "statusBg"  { emit "0078d4" }
+    if key == "statusFg"  { emit "ffffff" }
+    if key == "uiText"    { emit "1e1e1e" }
     emit "000000"
 }
 
@@ -47,52 +56,46 @@ func themeName() {
     emit n
 }
 
-// Resolve "system" to "dark" or "light". For now we don't read the
-// registry from Krypton (need to expose RegOpenKey/QueryValue —
-// punt to a follow-up). Default "system" → "dark".
 func themeResolve(name) {
     if name == "dark"  { emit "dark" }
     if name == "light" { emit "light" }
     emit "dark"
 }
 
+func themeColor(key) {
+    let n = themeResolve(themeName())
+    if n == "light" { emit themeColorLight(key) }
+    emit themeColorDark(key)
+}
+
+func themeBg()        { emit themeColor("bg") }
+func themeFg()        { emit themeColor("fg") }
+func themeOutputBg()  { emit themeColor("outputBg") }
+func themeOutputFg()  { emit themeColor("outputFg") }
+func themeStatusBg()  { emit themeColor("statusBg") }
+func themeWindowBg()  { emit themeColor("windowBg") }
+func themeTreeBg()    { emit themeColor("treeBg") }
+func themeTreeFg()    { emit themeColor("treeFg") }
+func themeUiText()    { emit themeColor("uiText") }
+func themeStatusFg()  { emit themeColor("statusFg") }
+
+
+// Apply a theme by name.
 func themeApply(name) {
     guiStateSet("theme", name)
+    let resolved = themeResolve(name)
+    if resolved == "dark" {
+        guiEnableDarkMode()
+    }
+    // Direct color overrides — these cover the parts the OS-level
+    // dark-mode flip doesn't reach (esp. when AppsUseLightTheme=1).
+    guiSetWindowBg(themeWindowBg())
+    guiSetUiTextColor(themeUiText())
 }
 
-func themeBg() {
-    let n = themeResolve(themeName())
-    if n == "light" { emit themeColorLight("bg") }
-    emit themeColorDark("bg")
-}
 
-func themeFg() {
-    let n = themeResolve(themeName())
-    if n == "light" { emit themeColorLight("fg") }
-    emit themeColorDark("fg")
-}
-
-func themeOutputBg() {
-    let n = themeResolve(themeName())
-    if n == "light" { emit themeColorLight("outputBg") }
-    emit themeColorDark("outputBg")
-}
-
-func themeOutputFg() {
-    let n = themeResolve(themeName())
-    if n == "light" { emit themeColorLight("outputFg") }
-    emit themeColorDark("outputFg")
-}
-
-// Apply theme colors to the two main RichEdit panes the IDE manages.
-// We only set the BACKGROUND color here. Setting the default
-// foreground via SCF_DEFAULT (the original plan) interfered with
-// per-range SCF_SELECTION format runs that the highlighter applies
-// later, leaving the editor stuck on the default color regardless
-// of what the highlighter did. Per-token color runs from
-// guiRichSetFmt + guiRichClearFmt's hardcoded d4d4d4 default give
-// us readable text on the dark background without needing a
-// document-wide default.
+// Paint editor + output backgrounds. Tree colors get applied
+// separately in run.k after the tree handle is known.
 func themePaint(editorRich, outputRich) {
     if len(editorRich) > 0 {
         guiRichSetBg(editorRich, themeBg())
