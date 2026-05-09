@@ -20,10 +20,10 @@
 // pumped by a 100 ms timer. Theme: dark palette applied to editor
 // + output panes.
 
-import "stdlib/gui.k"
-import "stdlib/proc.k"
-import "stdlib/fs.k"
-import "stdlib/json_emit.k"
+import "k:gui"
+import "k:proc"
+import "k:fs"
+import "k:json_emit"
 import "../kcode-win/highlighter.k"
 import "../kcode-win/lsp_client.k"
 import "../kcode-win/kbackend_client.k"
@@ -89,56 +89,92 @@ func onTabChange() {
 
 // ── Toolbar / menu handlers ──────────────────────────────────
 
+// Per-tab RichEdit design: each opened path gets its own
+// RichEdit + gutter pair. Tab switching becomes a guiHide on
+// the previous pair and guiShow on the target pair — no
+// readFile, no setText, no re-colorize. The first opened file
+// reuses the startup placeholder editor.
 func openFile(path) {
-    let rich = guiStateGet("rich")
+    let prevRich   = guiStateGet("rich")
+    let prevGutter = guiStateGet("gutter")
+    let myRich     = guiStateGet("tab.rich." + path)
+    let myGutter   = guiStateGet("tab.gutter." + path)
+
+    // Existing tab — instant toggle.
+    if len(myRich) > 0 {
+        if prevRich != myRich {
+            if len(prevRich) > 0   { guiHide(prevRich) }
+            if len(prevGutter) > 0 { guiHide(prevGutter) }
+            guiShow(myRich)
+            if len(myGutter) > 0 {
+                guiShow(myGutter)
+                guiStateSet("gutter", myGutter)
+            }
+            guiStateSet("rich", myRich)
+        }
+        guiStateSet("currentFile", path)
+        guiStatusSet(guiStateGet("status"), 0, " " + path)
+        guiStateSet("tab.skipReload", "1")
+        tabAddOrSelect(path)
+        guiStateSet("tab.skipReload", "0")
+        emit 0
+    }
+
+    // First open of this path — claim the startup editor or build a fresh pair.
+    let target = ""
+    let targetGutter = ""
+    if guiStateGet("rich.assigned") != "1" {
+        target = prevRich
+        targetGutter = prevGutter
+        guiStateSet("rich.assigned", "1")
+    } else {
+        let win       = guiStateGet("win")
+        let rightX    = toInt(guiStateGet("layout.rightX"))
+        let editorTop = toInt(guiStateGet("layout.editorTop"))
+        let rightW    = toInt(guiStateGet("layout.rightW"))
+        let editorH   = toInt(guiStateGet("layout.editorH"))
+        let gutterW   = toInt(guiStateGet("layout.gutterW"))
+        target = guiRichEdit(win, rightX + gutterW, editorTop, rightW - gutterW, editorH)
+        guiRichSetMonoFont(target, "Cascadia Code", 11)
+        guiRichSetBg(target, themeBg())
+        targetGutter = guiLineNumberArea(win, rightX, editorTop, gutterW, editorH, target)
+        if len(prevRich)   > 0 { guiHide(prevRich) }
+        if len(prevGutter) > 0 { guiHide(prevGutter) }
+    }
+
     let isBin = fsLooksBinary(path)
-    guiRichBeginUpdate(rich)
+    guiRichBeginUpdate(target)
     if isBin == "1" {
         let text = fsHexDump(path, 65536)
-        guiSetText(rich, text)
-        // No syntax-highlight pass for hex dumps; the default mono
-        // font is enough.
-        guiRichClearFmt(rich)
+        guiSetText(target, text)
+        guiRichClearFmt(target)
         guiStatusSet(guiStateGet("status"), 0, " " + path + " (binary)")
     } else {
         let text = readFile(path)
         // Win32 RichEdit normalizes "\r\n" to a single internal
-        // character, so byte offsets in the original file drift
-        // ahead of RichEdit positions by 1 per line. Pre-strip
-        // the \r so our highlighter's byte offsets match RichEdit's
-        // internal character indices 1:1.
+        // character — strip CR so highlighter byte offsets match
+        // editor char indices 1:1.
         text = replace(text, "\r\n", "\n")
-        guiSetText(rich, text)
-        // Highlighter does many EM_EXSETSEL/EM_SETCHARFORMAT
-        // round-trips per token (RichEdit ate ~70k of them on
-        // elf.k = 250 KB and the editor froze for several seconds).
-        // Cap to ~80 KB; bigger files render plain.
-        // ~300 KB cap so compile.k (228 KB) gets colored but elf.k
-        // (250 KB) is borderline — both highlight, with a noticeable
-        // pause on the very largest files. Lift the cap once we
-        // pump messages between batches.
+        guiSetText(target, text)
         if len(text) <= 300000 {
-            // Async chunked colorize: text appears immediately, the
-            // pump timer (onPump) walks hlStep through the file.
-            hlBegin(rich, text)
+            hlBegin(target, text, path)
             guiStatusSet(guiStateGet("status"), 0, " " + path + " (highlighting...)")
         } else {
-            guiRichClearFmt(rich)
+            guiRichClearFmt(target)
             guiStatusSet(guiStateGet("status"), 0, " " + path + " (large; no highlight)")
         }
-        // LSP didOpen omitted in v3 — we never call didClose, so a
-        // session of clicks would leave kls tracking N "open" docs,
-        // its reply backlog then fills the kls→IDE pipe, then OUR
-        // next write blocks the UI thread. Re-enable once we have a
-        // proper open/close ledger.
     }
-    guiRichEndUpdate(rich)
+    guiRichEndUpdate(target)
+
+    guiStateSet("tab.rich."   + path, target)
+    guiStateSet("tab.gutter." + path, targetGutter)
+    guiStateSet("rich",       target)
+    guiStateSet("gutter",     targetGutter)
     guiStateSet("currentFile", path)
     guiStateSet("tab.skipReload", "1")
     tabAddOrSelect(path)
     guiStateSet("tab.skipReload", "0")
-    let gutter = guiStateGet("gutter")
-    if len(gutter) > 0 { guiLineNumberRefresh(gutter) }
+    if len(targetGutter) > 0 { guiLineNumberRefresh(targetGutter) }
     emit 0
 }
 
@@ -399,6 +435,17 @@ just run {
 
     let gutter = guiLineNumberArea(win, rightX, editorTop, gutterW, editorH, editor)
     guiStateSet("gutter", gutter)
+
+    // Per-tab editor design: store layout coords + win so openFile
+    // can spawn new RichEdit/gutter pairs for each opened path.
+    // Tab switches then become guiHide/guiShow toggles instead of
+    // setText + re-colorize.
+    guiStateSet("win",              win)
+    guiStateSet("layout.rightX",    rightX + "")
+    guiStateSet("layout.editorTop", editorTop + "")
+    guiStateSet("layout.rightW",    rightW + "")
+    guiStateSet("layout.editorH",   editorH + "")
+    guiStateSet("layout.gutterW",   gutterW + "")
 
     let output = guiRichEdit(win, rightX, editorTop + editorH, rightW, outputH)
     guiRichSetMonoFont(output, "Cascadia Code", 10)

@@ -21,9 +21,9 @@
 //   build/output { chunk }      partial stdout/stderr text from build/run
 //   build/finished { code }     terminal status
 
-import "stdlib/jsonrpc.k"
-import "stdlib/json_emit.k"
-import "stdlib/json_parse.k"
+import "k:jsonrpc"
+import "k:json_emit"
+import "k:json_parse"
 import "build.k"
 
 

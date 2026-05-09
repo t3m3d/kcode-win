@@ -20,7 +20,7 @@
 //   - no Ctrl+/ comment-toggle
 // Each will land as a separate session once the main shell is up.
 
-import "stdlib/gui.k"
+import "k:gui"
 import "../kcode-win/lsp_client.k"
 import "../kcode-win/highlighter.k"
 

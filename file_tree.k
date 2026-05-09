@@ -14,8 +14,8 @@
 //   ftCurrentPath()                 // selected entry's full path
 //   ftIsCurrentDir()                // "1" / "0"
 
-import "stdlib/gui.k"
-import "stdlib/fs.k"
+import "k:gui"
+import "k:fs"
 
 
 let FT_MAX_DEPTH = 4

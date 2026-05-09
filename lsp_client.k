@@ -28,8 +28,8 @@
 //   init      — "1" once the initialize round-trip is done
 //   queue     — "\n"-separated pending events for the caller
 
-import "stdlib/proc.k"
-import "stdlib/json_emit.k"
+import "k:proc"
+import "k:json_emit"
 // stdlib/json_parse.k has a multi-key bug; use the small inline
 // extractors below for the few fields we care about (id, method,
 // params.uri).

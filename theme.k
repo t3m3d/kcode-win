@@ -11,7 +11,7 @@
 //   themeBg(), themeFg(), themeOutputBg(), themeOutputFg()
 //   themeStatusBg(), themeTreeBg(), themeTreeFg()
 
-import "stdlib/gui.k"
+import "k:gui"
 
 
 // ── Palette tables ──────────────────────────────────────────

@@ -21,8 +21,8 @@
 //   queue     — pending events, "\n"-separated
 //   pending   — requests queued before init completed (rare)
 
-import "stdlib/proc.k"
-import "stdlib/json_emit.k"
+import "k:proc"
+import "k:json_emit"
 
 
 // ── Lifecycle ────────────────────────────────────────────────
